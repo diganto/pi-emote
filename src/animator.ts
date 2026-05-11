@@ -28,10 +28,14 @@ export class Animator {
   private thinkTimer: ReturnType<typeof setTimeout> | null = null;
   private talkGapTimer: ReturnType<typeof setTimeout> | null = null;
   private talkDurationTimer: ReturnType<typeof setTimeout> | null = null;
+  private compactBlinkTimer: ReturnType<typeof setInterval> | null = null;
 
   // Cycle state
   private cycleIndex = 0;
   private cycleDirection = 1;
+
+  // Compact blink state
+  private compactBlinkIndex = 0;
 
   // Hold state
   private holdNextState: EmoteState = "idle";
@@ -90,6 +94,7 @@ export class Animator {
     if (this.talkGapTimer) { clearTimeout(this.talkGapTimer); this.talkGapTimer = null; }
     if (this.talkDurationTimer) { clearTimeout(this.talkDurationTimer); this.talkDurationTimer = null; }
     if (this.thinkTimer) { clearTimeout(this.thinkTimer); this.thinkTimer = null; }
+    if (this.compactBlinkTimer) { clearInterval(this.compactBlinkTimer); this.compactBlinkTimer = null; }
   }
 
   private clearStateTimers() {
@@ -99,6 +104,7 @@ export class Animator {
     if (this.talkGapTimer) { clearTimeout(this.talkGapTimer); this.talkGapTimer = null; }
     if (this.talkDurationTimer) { clearTimeout(this.talkDurationTimer); this.talkDurationTimer = null; }
     if (this.thinkTimer) { clearTimeout(this.thinkTimer); this.thinkTimer = null; }
+    if (this.compactBlinkTimer) { clearInterval(this.compactBlinkTimer); this.compactBlinkTimer = null; }
   }
 
   // --- State transitions ---
@@ -300,6 +306,16 @@ export class Animator {
   }
 
   private enterCompact() {
-    this.renderer.showRandomFrame("compact");
+    this.compactBlinkIndex = 0;
+    this.renderer.showCycleFrame("compact", this.compactBlinkIndex);
+
+    const count = this.renderer.getCycleFrameCount("compact");
+    if (count <= 1) return;
+
+    this.compactBlinkTimer = setInterval(() => {
+      if (this.currentState !== "compact") return;
+      this.compactBlinkIndex++;
+      this.renderer.showCycleFrame("compact", this.compactBlinkIndex);
+    }, 300);
   }
 }

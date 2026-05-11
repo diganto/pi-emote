@@ -33,7 +33,7 @@ function loadJsonFile(path: string): any | null {
 const DEFAULTS: Config = {
   enabled: true,
   debug: false,
-  size: 8,
+  size: 10,
   readingSpeed: 4,
   hideBelow: 80,
   holdDuration: { hi: 2000, success: 1200, failure: 1200 },

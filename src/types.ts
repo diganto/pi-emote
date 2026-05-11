@@ -4,6 +4,10 @@ export interface Config {
   enabled: boolean;
   debug: boolean;
   size: number;
+  exchangeRate?: {
+    from: string;
+    to: string;
+  };
   readingSpeed: number;
   hideBelow: number;
   holdDuration: { hi: number; success: number; failure: number };

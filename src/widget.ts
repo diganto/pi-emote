@@ -4,6 +4,31 @@ import type { Animator } from "./animator.js";
 import type { RenderedFrame } from "./renderer.js";
 import { log } from "./log.js";
 
+// --- Exchange rate ---
+
+let cachedRate: number | null = null;
+let rateFetchPromise: Promise<number | null> | null = null;
+
+async function fetchExchangeRate(from: string, to: string): Promise<number | null> {
+  if (cachedRate !== null) return cachedRate;
+  if (rateFetchPromise) return rateFetchPromise;
+
+  rateFetchPromise = (async () => {
+    try {
+      const response = await fetch(`https://api.exchangerate-api.com/v4/latest/${from}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      cachedRate = data.rates?.[to] ?? null;
+      return cachedRate;
+    } catch (e) {
+      log(`exchange rate fetch failed: ${e}`);
+      return null;
+    }
+  })();
+
+  return rateFetchPromise;
+}
+
 // --- Token formatting ---
 
 function formatTokens(count: number): string {
@@ -15,7 +40,7 @@ function formatTokens(count: number): string {
 
 // --- Info panel ---
 
-function buildInfoLines(width: number, config: Config, ctxRef: any, pi: any, theme: any): string[] {
+function buildInfoLines(width: number, config: Config, ctxRef: any, pi: any, theme: any, rate: number | null): string[] {
   const lines: string[] = [];
   if (!ctxRef) return lines;
 
@@ -38,19 +63,51 @@ function buildInfoLines(width: number, config: Config, ctxRef: any, pi: any, the
   let totalInput = 0;
   let totalOutput = 0;
   let totalCost = 0;
+  let currentProvider = "";
+  let currentModelId = "";
   try {
-    for (const entry of ctxRef.sessionManager.getEntries()) {
-      if (entry.type === "message" && entry.message.role === "assistant") {
-        totalInput += entry.message.usage?.input ?? 0;
-        totalOutput += entry.message.usage?.output ?? 0;
-        totalCost += entry.message.usage?.cost?.total ?? 0;
+    const entries = ctxRef.sessionManager.getEntries();
+    for (const entry of entries) {
+      if (entry.type === "model_change") {
+        currentProvider = entry.provider ?? "";
+        currentModelId = entry.modelId ?? "";
+      } else if (entry.type === "message" && entry.message.role === "assistant") {
+        const msg = entry.message;
+        const usage = msg.usage;
+        if (!usage) continue;
+
+        totalInput += usage.input ?? 0;
+        totalOutput += usage.output ?? 0;
+
+        // Use stored cost if non-zero, otherwise calculate from model pricing
+        const storedCost = usage.cost?.total ?? 0;
+        if (storedCost > 0) {
+          totalCost += storedCost;
+        } else if (currentProvider && currentModelId && ctxRef.modelRegistry) {
+          const modelInfo = ctxRef.modelRegistry.find(currentProvider, currentModelId);
+          if (modelInfo?.cost) {
+            const mc = modelInfo.cost;
+            totalCost += (usage.input * mc.input / 1_000_000)
+                      + (usage.output * mc.output / 1_000_000)
+                      + (usage.cacheRead * mc.cacheRead / 1_000_000)
+                      + (usage.cacheWrite * mc.cacheWrite / 1_000_000);
+          }
+        }
       }
     }
-  } catch (_) { /* ignore if not available */ }
+  } catch (e) {
+    log(`cost calculation: ${e}`);
+  }
 
   lines.push(`↑${formatTokens(totalInput)} ↓${formatTokens(totalOutput)}`);
 
-  lines.push(`$${totalCost.toFixed(3)}`);
+  // Add exchange rate and converted cost if available
+  if (rate !== null) {
+    const inrCost = totalCost * rate;
+    lines.push(`$${totalCost.toFixed(3)} / ₹${inrCost.toFixed(2)} • [$1 = ₹${rate.toFixed(2)}]`);
+  } else {
+    lines.push(`$${totalCost.toFixed(3)}`);
+  }
 
   const infoWidth = width - config.size - 5;
   return lines.map(l => {
@@ -152,6 +209,12 @@ export interface WidgetDeps {
 }
 
 export function createWidgetFactory(deps: WidgetDeps) {
+  // Start fetching rate when widget factory is created
+  const ex = deps.config.exchangeRate;
+  if (ex) {
+    void fetchExchangeRate(ex.from, ex.to);
+  }
+
   return (_tui: any, theme: any) => {
     deps.animator.setTui(_tui);
     return {
@@ -172,7 +235,7 @@ export function createWidgetFactory(deps: WidgetDeps) {
         const borderColor = (theme as any).getThinkingBorderColor?.(thinkingLevel)
           ?? ((s: string) => theme.fg("border", s));
         const border = borderColor("─".repeat(width));
-        const infoLines = buildInfoLines(width, config, deps.getCtxRef(), deps.pi, theme);
+        const infoLines = buildInfoLines(width, config, deps.getCtxRef(), deps.pi, theme, cachedRate);
 
         const lines: string[] = [];
         lines.push(border);
